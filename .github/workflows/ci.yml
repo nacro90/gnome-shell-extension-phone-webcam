@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gjs libglib2.0-bin zip
+
+      - name: Test
+        run: make test
+
+      - name: Pack
+        run: make pack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: "*.shell-extension.zip"
+
+  # A push to main whose "version-name" in metadata.json has no release yet
+  # becomes a GitHub release with the packed extension attached.
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension
+
+      - name: Release new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(jq -r '."version-name"' metadata.json)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already released"
+          else
+            gh release create "$tag" ./*.shell-extension.zip --title "$tag" --generate-notes --target "$GITHUB_SHA"
+          fi
