@@ -3,6 +3,7 @@ import {
     TEXT, CAMERAS, pickLang, describe, subtitleFor, knownCamera,
     parseAdbDevices, pickDevice, pickLoopback, scrcpyArgs, isLoopbackLive,
     lastErrorLine, mayRestart, smartStayWasOn,
+    parsePhoneInfo, groupPhones, pickPhoneSerial, phoneMenu, samePhoneItems, restartsOnPhoneChange,
 } from '../lib/logic.js';
 
 let failed = 0;
@@ -66,6 +67,72 @@ check('device: preferred serial wins', 'adb-ABC123-xyz._adb-tls-connect._tcp',
 check('device: preferred but not ready is not used', null, pickDevice(devices, 'USB999'));
 check('device: preferred but absent is not used', null, pickDevice(devices, 'NOPE'));
 check('device: none ready', null, pickDevice(parseAdbDevices('List of devices attached\nA\toffline\n'), ''));
+
+// Phones: the same phone can be reachable over several adb transports.
+check('phone info: serial number and model', {id: 'R5CW1234', model: 'SM-S918B'},
+    parsePhoneInfo('R5CW1234\nSM-S918B\n'));
+check('phone info: CRLF line ends', {id: 'R5CW1234', model: 'SM-S918B'},
+    parsePhoneInfo('R5CW1234\r\nSM-S918B\r\n'));
+check('phone info: model missing', {id: 'R5CW1234', model: ''}, parsePhoneInfo('R5CW1234\n\n'));
+check('phone info: no serial number', null, parsePhoneInfo('\nSM-S918B\n'));
+check('phone info: no output', null, parsePhoneInfo(null));
+for (const placeholder of ['unknown', 'UNKNOWN', '0123456789ABCDEF', '0123456789abcdef', '00000000'])
+    check(`phone info: placeholder serial number ${placeholder} identifies nothing`, null, parsePhoneInfo(`${placeholder}\nCheap Phone\n`));
+
+const seen = [
+    {serial: '192.168.1.20:41143', id: 'HW-A', model: 'SM-S918B'},
+    {serial: 'adb-HW-A-xyz._adb-tls-connect._tcp', id: 'HW-A', model: 'SM-S918B'},
+    {serial: 'USBSERIAL', id: 'HW-A', model: 'SM-S918B'},
+    {serial: '192.168.1.30:5555', id: 'HW-B', model: 'Pixel 8'},
+];
+const phones = groupPhones(seen);
+check('phones: one entry per phone, in adb order', ['HW-A', 'HW-B'], phones.map(p => p.id));
+check('phones: labelled by model', ['SM-S918B', 'Pixel 8'], phones.map(p => p.label));
+check('phones: USB transport first, then adb order',
+    ['USBSERIAL', '192.168.1.20:41143', 'adb-HW-A-xyz._adb-tls-connect._tcp'], phones[0].serials);
+check('phones: same model told apart by serial number ending',
+    ['Pixel 8 (1111)', 'Pixel 8 (2222)'],
+    groupPhones([
+        {serial: 'a', id: 'XX1111', model: 'Pixel 8'},
+        {serial: 'b', id: 'YY2222', model: 'Pixel 8'},
+    ]).map(p => p.label));
+check('phones: empty model falls back to the serial number', ['HW-C'],
+    groupPhones([{serial: 'c', id: 'HW-C', model: ''}]).map(p => p.label));
+check('phones: none', [], groupPhones([]));
+
+check('phone pick: first phone by default', 'USBSERIAL', pickPhoneSerial(phones, ''));
+check('phone pick: chosen phone', '192.168.1.30:5555', pickPhoneSerial(phones, 'HW-B'));
+check('phone pick: chosen phone absent, no silent fallback', null, pickPhoneSerial(phones, 'HW-Z'));
+check('phone pick: no phones', null, pickPhoneSerial([], ''));
+
+check('phone menu: hidden with a single phone', false, phoneMenu(groupPhones(seen.slice(0, 3)), '').visible);
+check('phone menu: hidden with a single phone that is the chosen one', false,
+    phoneMenu(groupPhones(seen.slice(0, 3)), 'HW-A').visible);
+check('phone menu: hidden without phones', false, phoneMenu([], 'HW-A').visible);
+check('phone menu: shown with two phones, chosen one marked',
+    {visible: true, items: [
+        {id: 'HW-A', label: 'SM-S918B', selected: false},
+        {id: 'HW-B', label: 'Pixel 8', selected: true},
+    ]}, phoneMenu(phones, 'HW-B'));
+check('phone menu: nothing chosen marks the first, which is the one used',
+    [true, false], phoneMenu(phones, '').items.map(i => i.selected));
+check('phone menu: shown when the chosen phone is absent, so another can be picked',
+    {visible: true, items: [{id: 'HW-A', label: 'SM-S918B', selected: false}]},
+    phoneMenu(groupPhones(seen.slice(0, 3)), 'HW-Z'));
+check('phone menu: hidden while an adb serial override is set, since it decides the phone', false,
+    phoneMenu(phones, 'HW-B', 'USBSERIAL').visible);
+
+const shown = phoneMenu(phones, 'HW-A').items;
+check('phone items: same phones, other selection', true, samePhoneItems(shown, phoneMenu(phones, 'HW-B').items));
+check('phone items: a phone left', false, samePhoneItems(shown, shown.slice(0, 1)));
+check('phone items: a label changed', false, samePhoneItems(shown, shown.map(i => ({...i, label: `${i.label}!`}))));
+check('phone items: other order', false, samePhoneItems(shown, [...shown].reverse()));
+check('phone items: both empty', true, samePhoneItems([], []));
+
+check('phone change: restarts a running stream', true, restartsOnPhoneChange('on'));
+check('phone change: restarts a connecting stream', true, restartsOnPhoneChange('starting'));
+check('phone change: retries after a failure, such as the chosen phone being absent', true, restartsOnPhoneChange('failed'));
+check('phone change: does not start a stream that is off', false, restartsOnPhoneChange('off'));
 
 check('loopback: lowest number wins', '/dev/video2', pickLoopback(['video10', 'video2']));
 check('loopback: single', '/dev/video10', pickLoopback(['video10']));

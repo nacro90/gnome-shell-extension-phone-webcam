@@ -9,6 +9,8 @@ installed on the phone.
 
 - Click the tile to start or stop the stream.
 - Open the tile menu to switch between the back and the front camera.
+- With more than one phone connected, the same menu lists the phones to choose
+  from.
 - A camera icon sits in the top bar while the stream is live.
 - If Android takes the camera away (face unlock, another camera app), the
   stream reconnects on its own.
@@ -57,8 +59,8 @@ From a checkout, `make install` does the packing and installing.
 
 ## Settings
 
-There is no preferences window. The tile menu sets the camera. Both keys can
-also be changed in dconf Editor under `/org/gnome/shell/extensions/phone-webcam/`,
+There is no preferences window. The tile menu sets the camera and the phone.
+All keys can also be changed in dconf Editor under `/org/gnome/shell/extensions/phone-webcam/`,
 or from a checkout:
 
 ```bash
@@ -69,7 +71,8 @@ gsettings --schemadir schemas set org.gnome.shell.extensions.phone-webcam serial
 | Key | Default | Meaning |
 |---|---|---|
 | `camera` | `back` | `back` or `front`. The tile menu sets this. |
-| `serial` | empty | adb serial to use. Empty means the first ready device. |
+| `device` | empty | Serial number of the phone to use. The tile menu sets this. Empty means the first connected phone. |
+| `serial` | empty | Exact adb serial to use; overrides `device` and hides the phone list. For setups the menu cannot express. |
 
 ## Good to know
 
@@ -81,6 +84,18 @@ gsettings --schemadir schemas set org.gnome.shell.extensions.phone-webcam serial
 - Samsung phones: Smart Stay opens the front camera before the screen dims,
   which makes Android close the stream. The extension turns Smart Stay off
   while streaming and turns it back on afterwards. Other phones are not touched.
+- A phone is recognized by its serial number, so it is listed once even when
+  adb reaches it over USB and wireless debugging at the same time, and the
+  choice survives the port changes of wireless debugging. A chosen phone is
+  streamed over USB when it is plugged in.
+- Until a phone is chosen in the menu, the first device listed by
+  `adb devices` is used.
+- If the chosen phone is not connected the tile says so; it does not fall back
+  to another phone. The menu then lists the connected phones, and picking one
+  starts the stream on it.
+- A phone that reports no serial number of its own (some report `unknown`) is
+  not listed. It still works while no phone is chosen in the menu, or through
+  the `serial` key.
 - The first virtual video device (lowest number) is used as the target.
 - The stream keeps running while the screen is locked, so a call survives the
   lock screen. The tile is hidden there; starting needs an unlocked session.

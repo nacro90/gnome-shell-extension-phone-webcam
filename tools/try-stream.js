@@ -18,6 +18,9 @@ const stream = new Stream(new System(), (state, reason) => {
         loop.quit();
 });
 
+stream.listPhones()
+    .then(phones => print(`phones: ${phones.map(p => `${p.label} x${p.serials.length}`).join(', ') || 'none'}`))
+    .catch(e => print(`phones: ${e.message}`));
 stream.start(camera);
 GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, Math.floor(seconds / 2), () => {
     stream.start(camera === 'back' ? 'front' : 'back');

@@ -2,7 +2,8 @@
 //
 // Tile:    click starts or stops the stream; the subtitle shows the state, or
 //          the camera while streaming. The arrow opens a menu to pick the back
-//          or front camera, which (re)starts the stream with it.
+//          or front camera, which (re)starts the stream with it. With more than
+//          one phone connected the menu also lists the phones.
 // Top bar: a camera icon is shown only while the stream is running.
 //
 // The stream keeps running while the screen is locked (session mode
@@ -18,7 +19,10 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
 
-import {ICON, TEXT, CAMERAS, pickLang, describe, subtitleFor, knownCamera} from './lib/logic.js';
+import {
+    ICON, TEXT, CAMERAS, pickLang, describe, subtitleFor, knownCamera,
+    phoneMenu, samePhoneItems, restartsOnPhoneChange,
+} from './lib/logic.js';
 import {Stream} from './lib/stream.js';
 import {System} from './lib/system.js';
 
@@ -27,6 +31,7 @@ const KNOWN_REASONS = ['noDevice', 'noLoopback', 'noScrcpy'];
 const WebcamToggle = GObject.registerClass({
     Signals: {
         'camera-requested': {param_types: [GObject.TYPE_STRING]},
+        'phone-requested': {param_types: [GObject.TYPE_STRING]},
     },
 }, class WebcamToggle extends QuickSettings.QuickMenuToggle {
     _init(lang) {
@@ -46,6 +51,34 @@ const WebcamToggle = GObject.registerClass({
             this.menu.addMenuItem(item);
             this._items.set(camera.id, item);
         }
+
+        this._shownPhones = [];
+        this._phoneItems = [];
+        this._phoneSeparator = new PopupMenu.PopupSeparatorMenuItem();
+        this._phoneSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._phoneSeparator);
+        this.menu.addMenuItem(this._phoneSection);
+        this.showPhones({visible: false, items: []});
+    }
+
+    // Takes the result of phoneMenu(). The items are rebuilt only when the
+    // phones themselves changed: a rebuild destroys the item under the pointer,
+    // which must not happen while that item is being activated.
+    showPhones({visible, items}) {
+        if (!samePhoneItems(items, this._shownPhones)) {
+            this._phoneSection.removeAll();
+            this._phoneItems = items.map(phone => {
+                const item = new PopupMenu.PopupMenuItem(phone.label);
+                item.connect('activate', () => this.emit('phone-requested', phone.id));
+                this._phoneSection.addMenuItem(item);
+                return item;
+            });
+        }
+        this._shownPhones = items;
+        items.forEach((phone, i) => this._phoneItems[i].setOrnament(
+            phone.selected ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE));
+        this._phoneSeparator.visible = visible;
+        this._phoneSection.actor.visible = visible;
     }
 
     showState(state, reason, cameraId) {
@@ -67,6 +100,8 @@ class WebcamIndicator extends QuickSettings.SystemIndicator {
         this._settings = settings;
         this._state = 'off';
         this._reason = null;
+        this._phones = [];
+        this._refreshing = false;
 
         this._icon = this._addIndicator();
         this._icon.icon_name = ICON;
@@ -75,6 +110,11 @@ class WebcamIndicator extends QuickSettings.SystemIndicator {
         this._toggle = new WebcamToggle(pickLang(GLib.get_language_names()));
         this._toggle.connect('clicked', () => this._onClicked());
         this._toggle.connect('camera-requested', (_toggle, id) => this._setCamera(id));
+        this._toggle.connect('phone-requested', (_toggle, id) => this._setPhone(id));
+        this._toggle.menu.connect('open-state-changed', (_menu, open) => {
+            if (open)
+                this._refreshPhones();
+        });
         this.quickSettingsItems.push(this._toggle);
 
         this._stream = new Stream(new System(), (state, reason) => {
@@ -85,6 +125,8 @@ class WebcamIndicator extends QuickSettings.SystemIndicator {
             this._show();
         });
         this._cameraChangedId = this._settings.connect('changed::camera', () => this._show());
+        this._phoneChangedIds = ['device', 'serial'].map(key =>
+            this._settings.connect(`changed::${key}`, () => this._showPhones()));
         this._sessionId = Main.sessionMode.connect('updated', () => this._syncLocked());
         this._syncLocked();
         this._show();
@@ -103,8 +145,31 @@ class WebcamIndicator extends QuickSettings.SystemIndicator {
         this._icon.visible = describe(this._state).topBar;
     }
 
+    _showPhones() {
+        this._toggle.showPhones(phoneMenu(this._phones,
+            this._settings.get_string('device'), this._settings.get_string('serial')));
+    }
+
+    // The phones are looked up each time the menu opens; nothing polls. One
+    // lookup runs at a time, so an older answer can never replace a newer one.
+    async _refreshPhones() {
+        if (this._refreshing)
+            return;
+        this._refreshing = true;
+        const stream = this._stream;
+        const phones = await stream.listPhones().catch(() => []);
+        this._refreshing = false;
+        if (this._stream !== stream)
+            return;
+        this._phones = phones;
+        this._showPhones();
+    }
+
     _start() {
-        this._stream.start(this._camera, this._settings.get_string('serial'));
+        this._stream.start(this._camera, {
+            phone: this._settings.get_string('device'),
+            serial: this._settings.get_string('serial'),
+        });
     }
 
     _onClicked() {
@@ -119,11 +184,18 @@ class WebcamIndicator extends QuickSettings.SystemIndicator {
         this._start();
     }
 
+    _setPhone(id) {
+        this._settings.set_string('device', id);
+        if (restartsOnPhoneChange(this._state))
+            this._start();
+    }
+
     destroy() {
         this._stream.destroy();
         this._stream = null;
         Main.sessionMode.disconnect(this._sessionId);
         this._settings.disconnect(this._cameraChangedId);
+        this._phoneChangedIds.forEach(id => this._settings.disconnect(id));
         this._settings = null;
         this.quickSettingsItems.forEach(item => item.destroy());
         super.destroy();

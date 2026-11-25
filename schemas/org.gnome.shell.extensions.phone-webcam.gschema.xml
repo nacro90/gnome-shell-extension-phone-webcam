@@ -6,10 +6,15 @@
       <summary>Camera to stream</summary>
       <description>Which phone camera to use: 'back' or 'front'.</description>
     </key>
+    <key name="device" type="s">
+      <default>''</default>
+      <summary>Phone to stream from</summary>
+      <description>Serial number of the phone (ro.serialno), set by the tile menu. Leave empty to use the first connected phone.</description>
+    </key>
     <key name="serial" type="s">
       <default>''</default>
-      <summary>adb serial of the phone</summary>
-      <description>Leave empty to use the first connected device listed by 'adb devices'.</description>
+      <summary>adb serial override</summary>
+      <description>Exact adb serial to use, as listed by 'adb devices'. When set it overrides 'device'. Leave empty to let the tile menu choose.</description>
     </key>
   </schema>
 </schemalist>

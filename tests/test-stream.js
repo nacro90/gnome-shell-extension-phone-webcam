@@ -26,6 +26,9 @@ class FakeSys {
         this.liveOnSpawn = true;  // the device goes live as soon as scrcpy runs
         this.devices = `List of devices attached\n${SERIAL}\tdevice\n`;
         this.smartStay = '1';
+        this.props = {};          // adb serial -> getprop output; default is its own phone
+        this.propFails = false;
+        this.timeouts = [];       // timeout passed with each run(), in order
         this.putFails = false;
         this.adbMissing = false;
         this.scrcpyMissing = false;
@@ -35,15 +38,21 @@ class FakeSys {
         this.disposed = false;
     }
 
-    async run(argv) {
+    async run(argv, timeoutSeconds) {
         const line = argv.join(' ');
         this.calls.push(line);
+        this.timeouts.push(timeoutSeconds);
         if (this.pendingRuns)
             await new Promise(resolve => this.pendingRuns.push(resolve));
         if (this.adbMissing)
             throw Object.assign(new Error('no adb'), {missing: true});
         if (line === 'adb devices')
             return this.devices;
+        if (line.includes('getprop')) {
+            if (this.propFails)
+                throw Object.assign(new Error('closed'), {missing: false});
+            return this.props[argv[2]] ?? `HW-${argv[2]}\nModel ${argv[2]}\n`;
+        }
         if (line.includes('settings get'))
             return `${this.smartStay}\n`;
         if (line.includes('settings put')) {
@@ -326,10 +335,104 @@ function setup() {
 {
     const {sys, states, stream} = setup();
     sys.devices = 'List of devices attached\nOTHER\tdevice\nPHONE2\tdevice\n';
-    stream.start('back', 'PHONE2');
+    stream.start('back', {serial: 'PHONE2'});
     await advance(sys, 1);
     check('serial: preferred device used', true, sys.procs[0].argv.includes('--serial=PHONE2'));
     check('serial: live', 'on', states[states.length - 1]);
+    check('serial: phones not looked up', false, sys.calls.some(c => c.includes('getprop')));
+}
+
+// Two transports of one phone and a second phone.
+const TWO_PHONES = 'List of devices attached\n10.0.0.5:4444\tdevice\nUSB1\tdevice\n10.0.0.9:5555\tdevice\nGONE\toffline\n';
+const TWO_PROPS = {
+    '10.0.0.5:4444': 'HW-A\nSM-S918B\n',
+    'USB1': 'HW-A\nSM-S918B\n',
+    '10.0.0.9:5555': 'HW-B\nPixel 8\n',
+};
+{
+    const {sys, stream} = setup();
+    sys.devices = TWO_PHONES;
+    sys.props = TWO_PROPS;
+    check('list phones: one entry per phone',
+        [{id: 'HW-A', label: 'SM-S918B', serials: ['USB1', '10.0.0.5:4444']},
+            {id: 'HW-B', label: 'Pixel 8', serials: ['10.0.0.9:5555']}],
+        await stream.listPhones());
+    check('list phones: offline devices not asked', false, sys.calls.some(c => c.includes('GONE')));
+    check('list phones: nothing started', 0, sys.procs.length);
+}
+{
+    const {sys, states, stream} = setup();
+    sys.devices = TWO_PHONES;
+    sys.props = TWO_PROPS;
+    stream.start('back', {phone: 'HW-B'});
+    await advance(sys, 1);
+    check('phone: chosen phone used', true, sys.procs[0].argv.includes('--serial=10.0.0.9:5555'));
+    check('phone: live', 'on', states[states.length - 1]);
+
+    stream.start('back', {phone: 'HW-A'});
+    await advance(sys, 4);
+    check('phone change: stream restarted on the other phone, over USB',
+        ['--serial=USB1'], sys.running.map(p => p.argv.find(a => a.startsWith('--serial='))));
+    check('phone change: smart stay restored on the first phone, turned off on the second',
+        ['0', '1', '0'], sys.puts());
+    check('phone change: ends live', 'on', states[states.length - 1]);
+}
+// Nothing chosen: the first ready device, without asking any phone who it is.
+{
+    const {sys, stream} = setup();
+    sys.devices = TWO_PHONES;
+    sys.props = TWO_PROPS;
+    stream.start('back');
+    await advance(sys, 1);
+    check('default: first ready device used', true, sys.procs[0].argv.includes('--serial=10.0.0.5:4444'));
+    check('default: no phone asked for its serial number', false, sys.calls.some(c => c.includes('getprop')));
+}
+// The lookup must not hold up a start for long when a transport is dead.
+{
+    const {sys, stream} = setup();
+    sys.devices = TWO_PHONES;
+    sys.props = TWO_PROPS;
+    stream.start('back', {phone: 'HW-B'});
+    await advance(sys, 1);
+    const asked = sys.calls.map((c, i) => [c, sys.timeouts[i]]).filter(([c]) => c.includes('getprop'));
+    check('lookup: every ready device asked, with a short timeout', [3, true],
+        [asked.length, asked.every(([, t]) => t > 0 && t <= 3)]);
+}
+{
+    const {sys, states, stream} = setup();
+    sys.devices = TWO_PHONES;
+    sys.props = TWO_PROPS;
+    stream.start('back', {phone: 'HW-Z'});
+    await advance(sys, 21);
+    check('phone: chosen phone absent is reported, no other phone used',
+        ['failed:noDevice', 0], [states[states.length - 1], sys.procs.length]);
+}
+// A phone that does not say who it is cannot be chosen (its adb serial is no
+// lasting name), but it still streams when nothing is chosen.
+{
+    const {sys, states, stream} = setup();
+    sys.propFails = true;
+    check('getprop fails: not offered', [], await stream.listPhones());
+    stream.start('back');
+    await advance(sys, 1);
+    check('getprop fails: stream still starts when nothing is chosen', ['on', true],
+        [states[states.length - 1], sys.procs[0].argv.includes(`--serial=${SERIAL}`)]);
+}
+{
+    const {sys, stream} = setup();
+    sys.devices = TWO_PHONES;
+    sys.props = {...TWO_PROPS, 'USB1': 'unknown\nSM-S918B\n', '10.0.0.9:5555': 'unknown\nPixel 8\n'};
+    check('placeholder serial numbers: those transports are left out, phones are not merged',
+        [{id: 'HW-A', label: 'SM-S918B', serials: ['10.0.0.5:4444']}], await stream.listPhones());
+}
+{
+    const {sys, stream} = setup();
+    sys.adbMissing = true;
+    let missing = null;
+    await stream.listPhones().catch(e => {
+        missing = e.missing;
+    });
+    check('list phones: adb missing is passed on', true, missing);
 }
 
 // Phones without Smart Stay are left alone.
