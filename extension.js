@@ -208,6 +208,14 @@ export default class PhoneWebcam extends Extension {
         Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
     }
 
+    // The extension also runs in the "unlock-dialog" session mode. Without it
+    // GNOME Shell disables the extension when the screen locks, which would
+    // stop scrcpy and cut the camera off from a call that is in progress. On
+    // the lock screen the tile and its menu are hidden, so the camera cannot be
+    // started, switched or moved to another phone there, and no phone names
+    // are shown; only the top bar icon tells that the camera is live. disable()
+    // still stops the stream and removes everything when the extension is
+    // turned off or GNOME Shell asks for it.
     disable() {
         this._indicator?.destroy();
         this._indicator = null;

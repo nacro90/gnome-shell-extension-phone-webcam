@@ -1,13 +1,13 @@
 {
   "uuid": "phone-webcam@nacro90.github.io",
   "name": "Phone Webcam",
-  "description": "Quick Settings toggle that turns an Android phone into a webcam. Streams the phone camera into a v4l2loopback device with scrcpy over USB or wireless debugging, and lets you switch between the back and front camera. Requires scrcpy, adb and the v4l2loopback kernel module.",
+  "description": "Quick Settings toggle that turns an Android phone into a webcam. Streams the phone camera into a v4l2loopback device with scrcpy over USB or wireless debugging, and lets you switch between the back and front camera. With several phones connected, the same menu picks the phone. On Samsung phones Smart Stay is turned off while streaming, because it takes the camera away, and turned back on afterwards. The stream keeps running while the screen is locked. Requires scrcpy, adb and the v4l2loopback kernel module.",
   "shell-version": [
     "50"
   ],
   "url": "https://github.com/nacro90/gnome-shell-extension-phone-webcam",
   "settings-schema": "org.gnome.shell.extensions.phone-webcam",
-  "version-name": "1.1.0",
+  "version-name": "1.1.1",
   "session-modes": [
     "user",
     "unlock-dialog"
