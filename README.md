@@ -7,6 +7,8 @@ One click streams the phone camera into a `v4l2loopback` device with
 Meet, Zoom, OBS and browsers then see it as a regular camera. Nothing is
 installed on the phone.
 
+![The Phone Webcam tile and its camera menu in Quick Settings](docs/screenshot.png)
+
 - Click the tile to start or stop the stream.
 - Open the tile menu to switch between the back and the front camera.
 - With more than one phone connected, the same menu lists the phones to choose
